@@ -61,7 +61,20 @@ install(
 
 ament_export_targets(export_robot_controller HAS_LIBRARY_TARGET)
 
+# Automated tests
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_robot_controller
+    test/test_robot_controller.cpp
+  )
+
+  if(TARGET test_robot_controller)
+    target_link_libraries(test_robot_controller
+      robot_controller
+    )
+  endif()
+
   find_package(ament_lint_auto REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
