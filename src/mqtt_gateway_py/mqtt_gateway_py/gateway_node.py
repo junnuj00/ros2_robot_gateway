@@ -1,21 +1,26 @@
+"""ROS2 gateway for MQTT velocity commands."""
+
 from geometry_msgs.msg import Twist
+from mqtt_gateway_py.message_converter import decode_velocity_command
+from mqtt_gateway_py.mqtt_client import MqttCommandClient
 import rclpy
 from rclpy.node import Node
 
 
 class MqttGatewayNode(Node):
+    """Connect MQTT commands to the ROS2 robot controller."""
 
     def __init__(self):
         super().__init__('mqtt_gateway_node')
 
-        # C++ 제어 노드로 이동 명령 전송
+        # ROS2 이동 명령 발행
         self.command_publisher = self.create_publisher(
             Twist,
             '/robot/cmd_vel',
             10
         )
 
-        # C++ 제어 노드에서 검증한 명령 수신
+        # C++에서 검증한 명령 수신
         self.safe_command_subscriber = self.create_subscription(
             Twist,
             '/robot/safe_cmd_vel',
@@ -23,7 +28,16 @@ class MqttGatewayNode(Node):
             10
         )
 
-        # 테스트 모드는 기본적으로 비활성화
+        # MQTT 통신은 별도 클래스로 관리
+        self.mqtt_client = MqttCommandClient()
+
+        # 100ms마다 MQTT 큐 확인
+        self.mqtt_timer = self.create_timer(
+            0.1,
+            self.process_mqtt_messages
+        )
+
+        # 기존 테스트 모드 유지
         self.declare_parameter('demo_mode', False)
 
         if self.get_parameter('demo_mode').value:
@@ -32,10 +46,36 @@ class MqttGatewayNode(Node):
                 self.send_demo_command
             )
 
-        self.get_logger().info('Python Gateway Node started.')
+        self.mqtt_client.start()
+        self.get_logger().info('Python MQTT Gateway started.')
+
+    def process_mqtt_messages(self):
+        """Validate queued MQTT messages and publish to ROS2."""
+        # 한 번에 최대 10개 처리하여 콜백 독점 방지
+        for _ in range(10):
+            payload = self.mqtt_client.get_message()
+
+            if payload is None:
+                break
+
+            try:
+                msg = decode_velocity_command(payload)
+            except ValueError as exc:
+                self.get_logger().warning(
+                    f'Rejected MQTT command: {exc}'
+                )
+                continue
+
+            self.command_publisher.publish(msg)
+
+            self.get_logger().info(
+                f'MQTT -> ROS2: '
+                f'linear={msg.linear.x:.2f}, '
+                f'angular={msg.angular.z:.2f}'
+            )
 
     def publish_velocity(self, linear_x, angular_z):
-        """ROS2 이동 명령 발행."""
+        """Publish a ROS2 velocity command."""
         msg = Twist()
         msg.linear.x = float(linear_x)
         msg.angular.z = float(angular_z)
@@ -44,11 +84,12 @@ class MqttGatewayNode(Node):
 
         self.get_logger().info(
             f'Published command: '
-            f'linear={linear_x:.2f}, angular={angular_z:.2f}'
+            f'linear={msg.linear.x:.2f}, '
+            f'angular={msg.angular.z:.2f}'
         )
 
     def handle_safe_command(self, msg):
-        """C++에서 검증한 이동 명령 수신."""
+        """Receive validated commands from the C++ controller."""
         self.get_logger().info(
             f'Received safe command: '
             f'linear={msg.linear.x:.2f}, '
@@ -56,22 +97,27 @@ class MqttGatewayNode(Node):
         )
 
     def send_demo_command(self):
-        """테스트용 이동 명령을 한 번만 발행."""
+        """Publish one demonstration command."""
         self.demo_timer.cancel()
         self.publish_velocity(2.0, 0.5)
 
 
 def main(args=None):
+    """Start the ROS2 MQTT Gateway."""
     rclpy.init(args=args)
-
-    node = MqttGatewayNode()
+    node = None
 
     try:
+        node = MqttGatewayNode()
         rclpy.spin(node)
+
     except KeyboardInterrupt:
         pass
+
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.mqtt_client.stop()
+            node.destroy_node()
 
         if rclpy.ok():
             rclpy.shutdown()
