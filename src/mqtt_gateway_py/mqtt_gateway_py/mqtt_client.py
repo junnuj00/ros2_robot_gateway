@@ -7,7 +7,7 @@ import paho.mqtt.client as mqtt
 
 
 class MqttCommandClient:
-    """Manage MQTT command reception separately from ROS2."""
+    """Manage MQTT communication separately from ROS2."""
 
     def __init__(
         self,
@@ -18,29 +18,23 @@ class MqttCommandClient:
         self.host = host
         self.port = port
         self.topic = topic
+        self.event_topic = 'robot/events/safe_velocity'
 
-        # 수신 메시지 보관용 큐
         self.message_queue = Queue(maxsize=100)
 
-        # paho-mqtt 1.6.1 API
         self.client = mqtt.Client()
-
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
 
-        # 연결이 끊어졌을 때 재시도 간격
         self.client.reconnect_delay_set(
             min_delay=1,
             max_delay=10
         )
 
     def on_connect(self, client, userdata, flags, rc):
-        """Subscribe to commands after MQTT connection."""
+        """Subscribe to commands after connecting."""
         if rc == 0:
-            result, _ = client.subscribe(
-                self.topic,
-                qos=1
-            )
+            result, _ = client.subscribe(self.topic, qos=1)
 
             if result == mqtt.MQTT_ERR_SUCCESS:
                 print(f'MQTT subscribed: {self.topic}')
@@ -50,18 +44,32 @@ class MqttCommandClient:
             print(f'MQTT connection failed: {rc}')
 
     def on_message(self, client, userdata, message):
-        """Store received messages without blocking."""
+        """Queue incoming commands without blocking."""
         try:
             self.message_queue.put_nowait(message.payload)
         except Full:
             print('MQTT message queue full. Message dropped.')
 
     def get_message(self):
-        """Return the next received message if available."""
+        """Return the next queued message."""
         try:
             return self.message_queue.get_nowait()
         except Empty:
             return None
+
+    def publish_event(self, payload):
+        """Publish a non-retained MQTT event."""
+        if not self.client.is_connected():
+            return False
+
+        result = self.client.publish(
+            self.event_topic,
+            payload,
+            qos=1,
+            retain=False
+        )
+
+        return result.rc == mqtt.MQTT_ERR_SUCCESS
 
     def start(self):
         """Connect and start the MQTT network loop."""

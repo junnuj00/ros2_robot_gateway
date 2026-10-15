@@ -1,6 +1,6 @@
-"""Validate MQTT commands and convert them to ROS2 messages."""
+"""Convert MQTT JSON and ROS2 velocity commands."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
 
@@ -58,3 +58,30 @@ def decode_velocity_command(payload):
     msg.angular.z = values['angular_z']
 
     return msg
+
+
+def encode_safe_velocity_command(msg):
+    """Convert a ROS2 safe velocity command to MQTT JSON."""
+    linear_x = float(msg.linear.x)
+    angular_z = float(msg.angular.z)
+
+    if not math.isfinite(linear_x) or not math.isfinite(angular_z):
+        raise ValueError('Non-finite ROS2 velocity command')
+
+    timestamp = datetime.now(timezone.utc).isoformat(
+        timespec='milliseconds'
+    ).replace('+00:00', 'Z')
+
+    data = {
+        'schema_version': '1.0',
+        'event_type': 'safe_velocity_command',
+        'timestamp': timestamp,
+        'linear_x': linear_x,
+        'angular_z': angular_z
+    }
+
+    return json.dumps(
+        data,
+        separators=(',', ':'),
+        allow_nan=False
+    )

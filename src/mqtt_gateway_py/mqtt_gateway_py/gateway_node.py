@@ -1,26 +1,29 @@
 """ROS2 gateway for MQTT velocity commands."""
 
 from geometry_msgs.msg import Twist
-from mqtt_gateway_py.message_converter import decode_velocity_command
+from mqtt_gateway_py.message_converter import (
+    decode_velocity_command,
+    encode_safe_velocity_command,
+)
 from mqtt_gateway_py.mqtt_client import MqttCommandClient
 import rclpy
 from rclpy.node import Node
 
 
 class MqttGatewayNode(Node):
-    """Connect MQTT commands to the ROS2 robot controller."""
+    """Connect MQTT commands and ROS2 velocity topics."""
 
     def __init__(self):
         super().__init__('mqtt_gateway_node')
 
-        # ROS2 이동 명령 발행
+        # ROS2 Publisher
         self.command_publisher = self.create_publisher(
             Twist,
             '/robot/cmd_vel',
             10
         )
 
-        # C++에서 검증한 명령 수신
+        # ROS2 Subscriber
         self.safe_command_subscriber = self.create_subscription(
             Twist,
             '/robot/safe_cmd_vel',
@@ -28,16 +31,16 @@ class MqttGatewayNode(Node):
             10
         )
 
-        # MQTT 통신은 별도 클래스로 관리
+        # MQTT Client
         self.mqtt_client = MqttCommandClient()
 
-        # 100ms마다 MQTT 큐 확인
+        # MQTT 메시지 큐 처리
         self.mqtt_timer = self.create_timer(
             0.1,
             self.process_mqtt_messages
         )
 
-        # 기존 테스트 모드 유지
+        # 기존 데모 모드 유지
         self.declare_parameter('demo_mode', False)
 
         if self.get_parameter('demo_mode').value:
@@ -50,8 +53,7 @@ class MqttGatewayNode(Node):
         self.get_logger().info('Python MQTT Gateway started.')
 
     def process_mqtt_messages(self):
-        """Validate queued MQTT messages and publish to ROS2."""
-        # 한 번에 최대 10개 처리하여 콜백 독점 방지
+        """Validate MQTT messages and publish ROS2 commands."""
         for _ in range(10):
             payload = self.mqtt_client.get_message()
 
@@ -89,9 +91,29 @@ class MqttGatewayNode(Node):
         )
 
     def handle_safe_command(self, msg):
-        """Receive validated commands from the C++ controller."""
+        """Forward validated ROS2 commands to MQTT."""
         self.get_logger().info(
             f'Received safe command: '
+            f'linear={msg.linear.x:.2f}, '
+            f'angular={msg.angular.z:.2f}'
+        )
+
+        try:
+            payload = encode_safe_velocity_command(msg)
+        except ValueError as exc:
+            self.get_logger().warning(
+                f'Rejected ROS2 event: {exc}'
+            )
+            return
+
+        if not self.mqtt_client.publish_event(payload):
+            self.get_logger().warning(
+                'MQTT event could not be queued.'
+            )
+            return
+
+        self.get_logger().info(
+            f'ROS2 -> MQTT event queued: '
             f'linear={msg.linear.x:.2f}, '
             f'angular={msg.angular.z:.2f}'
         )
