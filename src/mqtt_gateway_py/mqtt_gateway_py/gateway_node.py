@@ -1,5 +1,8 @@
 """ROS2 gateway for MQTT velocity commands."""
 
+from collections import OrderedDict
+import time
+
 from geometry_msgs.msg import Twist
 from mqtt_gateway_py.message_converter import (
     decode_velocity_command,
@@ -10,11 +13,18 @@ import rclpy
 from rclpy.node import Node
 
 
+DUPLICATE_CACHE_SECONDS = 10.0
+MAX_RECENT_COMMAND_IDS = 1000
+
+
 class MqttGatewayNode(Node):
     """Connect MQTT commands and ROS2 velocity topics."""
 
     def __init__(self):
         super().__init__('mqtt_gateway_node')
+
+        # Recent command IDs for duplicate detection
+        self.recent_command_ids = OrderedDict()
 
         # ROS2 Publisher
         self.command_publisher = self.create_publisher(
@@ -34,13 +44,13 @@ class MqttGatewayNode(Node):
         # MQTT Client
         self.mqtt_client = MqttCommandClient()
 
-        # MQTT 메시지 큐 처리
+        # MQTT message queue processing
         self.mqtt_timer = self.create_timer(
             0.1,
             self.process_mqtt_messages
         )
 
-        # 기존 데모 모드 유지
+        # Demo mode
         self.declare_parameter('demo_mode', False)
 
         if self.get_parameter('demo_mode').value:
@@ -52,6 +62,33 @@ class MqttGatewayNode(Node):
         self.mqtt_client.start()
         self.get_logger().info('Python MQTT Gateway started.')
 
+    def is_duplicate_command(self, command_id):
+        """Check and remember recently accepted command IDs."""
+        now = time.monotonic()
+
+        # Remove expired command IDs
+        while self.recent_command_ids:
+            oldest_id, seen_at = next(
+                iter(self.recent_command_ids.items())
+            )
+
+            if now - seen_at <= DUPLICATE_CACHE_SECONDS:
+                break
+
+            self.recent_command_ids.popitem(last=False)
+
+        if command_id in self.recent_command_ids:
+            return True
+
+        # Remember the accepted command
+        self.recent_command_ids[command_id] = now
+
+        # Keep memory usage bounded
+        if len(self.recent_command_ids) > MAX_RECENT_COMMAND_IDS:
+            self.recent_command_ids.popitem(last=False)
+
+        return False
+
     def process_mqtt_messages(self):
         """Validate MQTT messages and publish ROS2 commands."""
         for _ in range(10):
@@ -61,10 +98,16 @@ class MqttGatewayNode(Node):
                 break
 
             try:
-                msg = decode_velocity_command(payload)
+                msg, command_id = decode_velocity_command(payload)
             except ValueError as exc:
                 self.get_logger().warning(
                     f'Rejected MQTT command: {exc}'
+                )
+                continue
+
+            if self.is_duplicate_command(command_id):
+                self.get_logger().warning(
+                    'Rejected duplicate MQTT command'
                 )
                 continue
 

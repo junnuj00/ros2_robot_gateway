@@ -1,4 +1,3 @@
-
 """Convert MQTT JSON and ROS2 velocity commands."""
 
 from datetime import datetime, timezone
@@ -13,7 +12,7 @@ MAX_FUTURE_SKEW_SECONDS = 1.0
 
 
 def decode_velocity_command(payload):
-    """Validate an MQTT command and convert it to ROS2 Twist."""
+    """Validate an MQTT command and return its Twist and command ID."""
     try:
         data = json.loads(payload.decode('utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -55,7 +54,6 @@ def decode_velocity_command(payload):
         raise ValueError('Timestamp must use UTC')
 
     now = datetime.now(timezone.utc)
-
     age_seconds = (now - command_time).total_seconds()
 
     if age_seconds > MAX_COMMAND_AGE_SECONDS:
@@ -89,7 +87,7 @@ def decode_velocity_command(payload):
     msg.linear.x = values['linear_x']
     msg.angular.z = values['angular_z']
 
-    return msg
+    return msg, command_id
 
 
 def encode_safe_velocity_command(msg):
