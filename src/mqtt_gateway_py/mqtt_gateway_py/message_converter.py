@@ -1,3 +1,4 @@
+
 """Convert MQTT JSON and ROS2 velocity commands."""
 
 from datetime import datetime, timezone
@@ -7,8 +8,12 @@ import math
 from geometry_msgs.msg import Twist
 
 
+MAX_COMMAND_AGE_SECONDS = 2.0
+MAX_FUTURE_SKEW_SECONDS = 1.0
+
+
 def decode_velocity_command(payload):
-    """Convert a validated MQTT JSON command to ROS2 Twist."""
+    """Validate an MQTT command and convert it to ROS2 Twist."""
     try:
         data = json.loads(payload.decode('utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -27,20 +32,47 @@ def decode_velocity_command(payload):
 
     timestamp = data.get('timestamp')
 
-    if not isinstance(timestamp, str) or not timestamp.endswith('Z'):
-        raise ValueError('Timestamp must be a UTC string ending in Z')
+    if (
+        not isinstance(timestamp, str)
+        or not timestamp.endswith('Z')
+        or 'T' not in timestamp
+    ):
+        raise ValueError(
+            'Timestamp must be a UTC ISO8601 string ending in Z'
+        )
 
     try:
-        datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        command_time = datetime.fromisoformat(
+            timestamp.replace('Z', '+00:00')
+        )
     except ValueError as exc:
         raise ValueError('Invalid timestamp format') from exc
+
+    if (
+        command_time.tzinfo is None
+        or command_time.utcoffset().total_seconds() != 0
+    ):
+        raise ValueError('Timestamp must use UTC')
+
+    now = datetime.now(timezone.utc)
+
+    age_seconds = (now - command_time).total_seconds()
+
+    if age_seconds > MAX_COMMAND_AGE_SECONDS:
+        raise ValueError('Stale MQTT command')
+
+    if age_seconds < -MAX_FUTURE_SKEW_SECONDS:
+        raise ValueError('MQTT timestamp is too far in the future')
 
     values = {}
 
     for field in ('linear_x', 'angular_z'):
         value = data.get(field)
 
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+        ):
             raise ValueError(f'Invalid numeric field: {field}')
 
         try:
