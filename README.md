@@ -114,6 +114,8 @@ ros2_robot_gateway/
 
 - [ROS2 Interface](docs/ros_interface.md)
 - [MQTT Interface](docs/mqtt_interface.md)
+- [System Architecture](docs/architecture.md)
+- [Test Results](docs/test_results.md)
 
 ## 6. Build and Run
 
