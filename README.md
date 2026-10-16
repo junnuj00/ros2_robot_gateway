@@ -116,6 +116,7 @@ ros2_robot_gateway/
 - [MQTT Interface](docs/mqtt_interface.md)
 - [System Architecture](docs/architecture.md)
 - [Test Results](docs/test_results.md)
+- [Gazebo Harmonic Integration](docs/gazebo_integration.md)
 
 ## 6. Build and Run
 
