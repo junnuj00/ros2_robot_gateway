@@ -15,7 +15,10 @@ setup(
     zip_safe=True,
     maintainer='junnuj00',
     maintainer_email='310557143+junnuj00@users.noreply.github.com',
-    description='TODO: Package description',
+    description=(
+        'ROS2-MQTT bidirectional gateway with command validation, '
+        'safety control integration, and PostgreSQL logging'
+    ),
     license='Apache-2.0',
     extras_require={
         'test': [

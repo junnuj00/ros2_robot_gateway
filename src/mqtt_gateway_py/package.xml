@@ -3,12 +3,15 @@
 <package format="3">
   <name>mqtt_gateway_py</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>ROS2-MQTT gateway with PostgreSQL command logging</description>
   <maintainer email="310557143+junnuj00@users.noreply.github.com">junnuj00</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
+
+  <exec_depend>python3-paho-mqtt</exec_depend>
+  <exec_depend>python3-psycopg2</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -243,9 +243,94 @@ C++ 제어 노드의 단위 테스트와 Python 패키지의 자동화 검사를
 - 중복 명령 기록은 메모리에 보관되어 Gateway 재시작 시 초기화됩니다.
 - MQTT 이벤트 발행 요청 성공이 실제 로봇의 명령 수행 완료를 의미하지는 않습니다.
 
-## 9. Planned Work
+## 9. PostgreSQL Command Logging
 
-- PostgreSQL 기반 명령 처리 로그 저장
-- 정상 및 거부 명령 이력 조회
-- 데이터베이스 연결 장애 검증
-- 최종 테스트 및 실행 문서 보완
+Python MQTT Gateway는 명령 처리 결과를 PostgreSQL에 저장합니다.
+
+### Recorded Information
+
+- command_id: MQTT 명령 식별자
+- logged_at: 로그 저장 시각
+- linear_x: 입력 직진 속도
+- angular_z: 입력 회전 속도
+- status: ACCEPTED / DUPLICATE / REJECTED
+- reason: 명령 거부 사유
+
+로그 저장은 별도 작업 스레드에서 수행하여
+ROS2 명령 처리가 DB 응답을 직접 기다리지 않도록 구성했습니다.
+
+### Installation
+
+Ubuntu 24.04 환경에서 실행합니다.
+
+```bash
+sudo apt update
+sudo apt install -y postgresql postgresql-contrib \
+  python3-psycopg2 python3-paho-mqtt
+```
+
+### Database Setup
+
+PostgreSQL 서비스를 시작합니다.
+
+```bash
+sudo systemctl start postgresql
+```
+
+현재 Ubuntu 사용자와 동일한 이름으로 DB 사용자를 생성합니다.
+
+```bash
+sudo -u postgres createuser --login --no-superuser \
+  --no-createdb --no-createrole "$USER"
+```
+
+프로젝트 데이터베이스를 생성합니다.
+
+```bash
+sudo -u postgres createdb --owner="$USER" robot_gateway_db
+```
+
+이미 사용자나 데이터베이스가 존재한다면 생성 명령은 생략합니다.
+
+테이블 구조를 적용합니다.
+
+```bash
+psql -d robot_gateway_db -f db/schema.sql
+```
+
+### Query Command Logs
+
+```sql
+SELECT
+    id,
+    logged_at,
+    command_id,
+    linear_x,
+    angular_z,
+    status,
+    reason
+FROM command_logs
+ORDER BY id DESC
+LIMIT 10;
+```
+
+### Verified Behavior
+
+- 정상 명령 ACCEPTED 저장
+- 중복 명령 DUPLICATE 저장
+- 오래된 명령 REJECTED 저장
+- PostgreSQL 중단 중 ROS2-MQTT 통신 유지
+- PostgreSQL 복구 후 새로운 로그 저장 재개
+
+### Limitations
+
+- 데이터베이스 장애 중 일부 로그는 유실될 수 있습니다.
+- 로그 큐는 최대 100개의 기록을 보관합니다.
+- 현재 로컬 PostgreSQL 연결을 기준으로 구성되어 있습니다.
+- 로그 저장 성공이 실제 로봇 동작 완료를 의미하지 않습니다.
+
+## 10. Planned Work
+
+- 최종 자동화 테스트 및 전체 통합 검증
+- README와 실행 환경 최종 점검
+- GitHub 포트폴리오 정리

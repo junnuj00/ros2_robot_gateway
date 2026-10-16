@@ -1,9 +1,12 @@
+
 """ROS2 gateway for MQTT velocity commands."""
 
 from collections import OrderedDict
+import json
 import time
 
 from geometry_msgs.msg import Twist
+from mqtt_gateway_py.db_logger import CommandDbLogger
 from mqtt_gateway_py.message_converter import (
     decode_velocity_command,
     encode_safe_velocity_command,
@@ -23,17 +26,14 @@ class MqttGatewayNode(Node):
     def __init__(self):
         super().__init__('mqtt_gateway_node')
 
-        # Recent command IDs for duplicate detection
         self.recent_command_ids = OrderedDict()
 
-        # ROS2 Publisher
         self.command_publisher = self.create_publisher(
             Twist,
             '/robot/cmd_vel',
             10
         )
 
-        # ROS2 Subscriber
         self.safe_command_subscriber = self.create_subscription(
             Twist,
             '/robot/safe_cmd_vel',
@@ -41,16 +41,16 @@ class MqttGatewayNode(Node):
             10
         )
 
-        # MQTT Client
         self.mqtt_client = MqttCommandClient()
 
-        # MQTT message queue processing
+        # PostgreSQL logging runs on a separate worker thread.
+        self.db_logger = CommandDbLogger()
+
         self.mqtt_timer = self.create_timer(
             0.1,
             self.process_mqtt_messages
         )
 
-        # Demo mode
         self.declare_parameter('demo_mode', False)
 
         if self.get_parameter('demo_mode').value:
@@ -66,7 +66,6 @@ class MqttGatewayNode(Node):
         """Check and remember recently accepted command IDs."""
         now = time.monotonic()
 
-        # Remove expired command IDs
         while self.recent_command_ids:
             oldest_id, seen_at = next(
                 iter(self.recent_command_ids.items())
@@ -80,17 +79,15 @@ class MqttGatewayNode(Node):
         if command_id in self.recent_command_ids:
             return True
 
-        # Remember the accepted command
         self.recent_command_ids[command_id] = now
 
-        # Keep memory usage bounded
         if len(self.recent_command_ids) > MAX_RECENT_COMMAND_IDS:
             self.recent_command_ids.popitem(last=False)
 
         return False
 
     def process_mqtt_messages(self):
-        """Validate MQTT messages and publish ROS2 commands."""
+        """Validate MQTT messages, publish, and record results."""
         for _ in range(10):
             payload = self.mqtt_client.get_message()
 
@@ -99,9 +96,30 @@ class MqttGatewayNode(Node):
 
             try:
                 msg, command_id = decode_velocity_command(payload)
+
             except ValueError as exc:
                 self.get_logger().warning(
                     f'Rejected MQTT command: {exc}'
+                )
+
+                # Recover the ID when the JSON is readable.
+                command_id = None
+
+                try:
+                    data = json.loads(payload)
+                    if isinstance(data, dict):
+                        value = data.get('command_id')
+                        if isinstance(value, str):
+                            command_id = value
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    pass
+
+                self.db_logger.log(
+                    command_id,
+                    None,
+                    None,
+                    'REJECTED',
+                    str(exc)
                 )
                 continue
 
@@ -109,9 +127,24 @@ class MqttGatewayNode(Node):
                 self.get_logger().warning(
                     'Rejected duplicate MQTT command'
                 )
+
+                self.db_logger.log(
+                    command_id,
+                    msg.linear.x,
+                    msg.angular.z,
+                    'DUPLICATE',
+                    'Duplicate command'
+                )
                 continue
 
             self.command_publisher.publish(msg)
+
+            self.db_logger.log(
+                command_id,
+                msg.linear.x,
+                msg.angular.z,
+                'ACCEPTED'
+            )
 
             self.get_logger().info(
                 f'MQTT -> ROS2: '
@@ -182,6 +215,7 @@ def main(args=None):
     finally:
         if node is not None:
             node.mqtt_client.stop()
+            node.db_logger.close()
             node.destroy_node()
 
         if rclpy.ok():
